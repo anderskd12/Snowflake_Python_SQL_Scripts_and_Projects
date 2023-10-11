@@ -1,0 +1,77 @@
+# The Snowpark package is required for Python Worksheets. 
+# You can add more packages by selecting them using the Packages control and then importing them.
+
+import snowflake.snowpark as snowpark
+from snowflake.snowpark.functions import col
+import pandas as pd
+
+
+def main(session: snowpark.Session): 
+    # Your code goes here, inside the "main" handler.
+    tableName = 'information_schema.packages'
+    dataframe = session.table(tableName).filter(col("language") == 'python')
+
+    ### Create snowflake data frame from SELECT statement #############################
+    dataframe_sf = session.sql("select * from SURFERS")
+    # Print a sample of the dataframe to standard output.
+    dataframe_sf.show()
+    #vs pandas --  dataframe.head(3)
+
+    ### for learning - setup PANDAS dataframe within the snowflake worksheet - added reference Import above
+    #data = {'SURFER_NAME': ['Python_new', 'Work', 'Sheet'],
+    #       'HOME_COUNTRY': ['USA', 'USA', 'USA'],
+    #       'STANCE':['goofy','goofy','goofy']}
+    data = {'SURFER_NAME': ['Python_new', 'KELLY A', 'Sheet'],
+           'HOME_COUNTRY': ['USA', 'USA', 'USA'],
+           'STANCE':['GOOFY','GOOFY','GOOFY']}
+    
+    df_pandas = pd.DataFrame(data)
+    
+    print("df_pandas dataframe type: " , type(df_pandas))
+    print("dataframe_sf dataframe type: " ,type(dataframe_sf))
+
+    ##### Show conversion to pandas  ############################## 
+    df_pandas2 = dataframe_sf.to_pandas()
+    print("df_pandas2 converted type: " ,type(df_pandas2))
+    print(df_pandas2.head(2))
+
+
+    #### Show conversion of pandas back to sf dataframe ###########################
+    dataframe_sf2 = session.create_dataframe(df_pandas)
+    print("dataframe_sf2 converted type: " ,type(dataframe_sf2))
+    # why a table instead of a dataframe?  -->  dataframe_sf2 converted type:  <class 'snowflake.snowpark.table.Table'>
+
+    ### JOIN / UNION ALL two sf dataframes together ################################
+    df_consolidated = dataframe_sf.union_all(dataframe_sf2)
+    print("consolidated rows: ")
+    df_consolidated.show()
+    #df_consolidated.write.mode("append").save_as_table("SURFERS")
+
+    print("dataframe_sf rows: ")
+    dataframe_sf.show()
+    print("dataframe_sf2 rows: ")
+    dataframe_sf2.show()
+    ### If we want ONLY new records ##############################################
+    df_new = dataframe_sf2.except_(dataframe_sf) 
+    print('new rows dataframe: ')
+    df_new.show()
+    
+    ### Write dataframe to SURFERS table - now all values are in the table ---- 
+    df_new.write.mode("append").save_as_table("SURFERS")
+    
+    '''
+    #    df = session.create_dataframe([("short", 1), ("tall", 10)], schema=["category", "height"])
+        df = df.to_pandas()
+        #do data manipulation
+        #convert pandas dataframe to snowpark dataframe
+        dataframe = session.create_dataframe(df)
+        return dataframe 
+        
+    '''
+    print(df_pandas.head(5))
+
+    #df_lhs.join(df_rhs, df_lhs.col("key") == df_rhs.col("key")).select(df_lhs["key"].as_("key"), "value1", "value2").show()
+    
+    # Return value will appear in the Results tab.
+    return dataframe_sf
+
