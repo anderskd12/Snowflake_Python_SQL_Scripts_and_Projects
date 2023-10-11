@@ -1,0 +1,263 @@
+
+USE DATABASE KA_DB
+USE SCHEMA 
+USE WAREHOUSE KA_WH
+
+
+DELETE FROM SURFERS
+INSERT INTO SURFERS VALUES  ('KELLY SLATER', 'USA', 'REGULAR');
+INSERT INTO SURFERS VALUES  ('KELLY A', 'USA', 'GOOFY')
+
+SELECT * FROM SURFERS
+
+-- CREATE TABLE TO HOLD SURFERS FAVORITE SPOTS 
+    CREATE TABLE SURF_SPOTS_FAV (SURFER_NAME CHAR(30), SURF_SPOT CHAR(30), SURF_SPOT_RATING INT)
+    INSERT INTO SURF_SPOTS_FAV VALUES ('KELLY SLATER', 'PIPELINE', 10)
+    INSERT INTO SURF_SPOTS_FAV VALUES ('KELLY A', 'BIRD ROCK', 3)
+    INSERT INTO SURF_SPOTS_FAV VALUES ('KELLY A', 'AGATE', 5)
+
+    
+SELECT SP.SURFER_NAME, SURF_SPOT, SURF_SPOT_RATING, HOME_COUNTRY, STANCE FROM SURF_SPOTS_FAV AS SP JOIN SURFERS AS SF
+ ON SP.SURFER_NAME = SF.SURFER_NAME
+ 
+-- CREATE VIEW TO JOIN SURFERS AND SPOTS --------------------------------------------------------------------------------
+    CREATE VIEW VSURFERS_AND_SPOTS AS 
+    SELECT SP.SURFER_NAME, SURF_SPOT, SURF_SPOT_RATING, HOME_COUNTRY, STANCE FROM SURF_SPOTS_FAV AS SP JOIN SURFERS AS SF
+     ON SP.SURFER_NAME = SF.SURFER_NAME
+
+
+SELECT * FROM VSURFERS_AND_SPOTS
+
+-- CREATE STREAM TO TRACK CHANGES ON VIEW ---------------------------------------------------------------------------
+    create or replace stream STREAM_VSURFERS_AND_SPOTS on view VSURFERS_AND_SPOTS;
+
+INSERT INTO SURF_SPOTS_FAV VALUES ('KELLY A', 'TRAILS', 2)
+
+-- CHECK STREAM --------------------------------
+SELECT * FROM STREAM_VSURFERS_AND_SPOTS
+-- AND VIEW 
+SELECT * FROM VSURFERS_AND_SPOTS
+
+-- RUN UPDATE 
+UPDATE SURF_SPOTS_FAV SET SURF_SPOT_RATING = 6 WHERE SURF_SPOT = 'AGATE'
+SELECT * FROM STREAM_VSURFERS_AND_SPOTS
+
+-- EXAMPLE EXCLUDES METADATA$ROWID
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+select * exclude metadata$row_id from ordersByCustomerStream;
+
+
+-- NOW WE CAN SETUP A TASK TO INSERT AND TRACK THESE AFTER THERE IS NEW DATA ---- 
+--DROP TABLE K_TRACK_CHANGES_FROM_TASK
+--- CREATE TABLE TO HOLD CHANGES ----------------------------------------------------------------------------
+    CREATE TABLE K_TRACK_CHANGES_FROM_TASK (MYFLAG VARCHAR(), SOMESTRING VARCHAR, TIME_RAN TIMESTAMP )
+
+-- EXAMPLE INSERT FROM STREAM
+    INSERT INTO K_TRACK_CHANGES_FROM_TASK 
+    (SELECT METADATA$ACTION, SURFER_NAME || ' - ' || SURF_SPOT AS UPDATED_SURFERS_SPOTS, CURRENT_TIMESTAMP() FROM STREAM_VSURFERS_AND_SPOTS)
+
+
+-- CREATE A PROCEDURE TO MOVE THIS OVER WHEN CALLED ----------------------
+    CREATE OR REPLACE PROCEDURE TRACK_FROM_TASKS() 
+        RETURNS VARCHAR
+        LANGUAGE SQL 
+    AS 
+      $$
+        BEGIN 
+            INSERT INTO K_TRACK_CHANGES_FROM_TASK 
+            (SELECT METADATA$ACTION, SURFER_NAME || ' - ' || SURF_SPOT AS UPDATED_SURFERS_SPOTS, CURRENT_TIMESTAMP() FROM STREAM_VSURFERS_AND_SPOTS);
+            RETURN 'COMPLETED';
+        END 
+      $$
+
+
+SELECT * FROM K_TRACK_CHANGES_FROM_TASK
+DELETE FROM K_TRACK_CHANGES_FROM_TASK
+
+UPDATE SURF_SPOTS_FAV SET SURF_SPOT_RATING = 6 WHERE SURF_SPOT = 'AGATE'
+
+-- STORES CHANGES 
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+-- PROC THAT INSERTS UPDATED RECORDS --
+CALL TRACK_FROM_TASKS()
+-- CLEARS OUT AUTOMATICALLLY??
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+
+
+-- CREATE A TASK FOR WATCHING FOR CHANGES -------------------------------------------
+    CREATE OR REPLACE TASK WATCH_FOR_SPOTS_CHANGE_TASK
+    WAREHOUSE = KA_WH
+    WHEN
+      SYSTEM$STREAM_HAS_DATA('STREAM_VSURFERS_AND_SPOTS')
+    AS
+    CALL K_ANALYTICS.TRACK_FROM_TASKS();
+-- Task WATCH_FOR_SPOTS_CHANGE_TASK successfully created.
+-- NOTE:  USE AFTER CLAUSE TO ORCHESTRATE DAGs
+
+
+-- WHEN I UPDATE DATA - DOES THIS NOT RUN AUTOMATICALLY??
+UPDATE SURF_SPOTS_FAV SET SURF_SPOT_RATING = 8 WHERE SURF_SPOT = 'AGATE'
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+-- I SEE THE TWO ROWS 
+SELECT * FROM K_TRACK_CHANGES_FROM_TASK
+-- NOT IN THERE YET...
+
+-- ADD INSERT FOR TESTING 
+INSERT INTO SURF_SPOTS_FAV VALUES ('KELLY A', 'SAMMYS', 5)
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+-- I SEE THE NEW ROW 
+SELECT * FROM K_TRACK_CHANGES_FROM_TASK
+-- NOT IN THERE YET... NEED TO SCHEDULE THIS....
+
+-- CAN CHECK THE INFORMATION_SCHEMA FOR TASK HISTORY --------------------
+SELECT *
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+    SCHEDULED_TIME_RANGE_START=>DATEADD('DAY',-1,CURRENT_TIMESTAMP()),
+    RESULT_LIMIT => 100))
+ORDER BY SCHEDULED_TIME DESC
+;
+
+
+--- NEED TO SCHEDULE TASK (OR CAN JUST EXECUTE)  ---------------------------------------
+EXECUTE TASK WATCH_FOR_SPOTS_CHANGE_TASK;
+
+-- ONCE COMPLETED THIS SHOWS WHAT WAS CHANGED ---- 
+SELECT * FROM K_TRACK_CHANGES_FROM_TASK
+-- THE STREAM IS CLEARED OUT ---------------------
+SELECT * FROM STREAM_VSURFERS_AND_SPOTS
+
+
+-- OVERVIEW OF WHAT WE DID 
+1.  SETUP TWO TABLES TO HOLD SURFERS AND FAVORITE SPOTS 
+2.  CREATED A VIEW TO JOIN THESE TABLES 
+3.  CREATED A STREAM TO TRACK ALL THE CHANGES BETWEEN THESE TABLES VIA THE VIEW 
+4.  CREATED A PROCEDURE TO ADD CHANGES FROM STREAM TO TRACKING TABLE 
+5.  CREATED A TASK TO PULL CHANGES TRACKED IN STREAM TO INSERT INTO TRACKING - AND CLEAR OUT STREAM 
+
+-- WE COULD SCHEDULE THIS DAILY - THEN KEEP AN EYE ON THE TRACKING TABLE TO SEE WHAT CHANGES HAVE BEEN OCCURING IN OUR DATA
+
+
+-- FINAL EXAMPLE ------------------------------------------------------------------------------------
+-- ADD NEW DATA 
+    INSERT INTO SURFERS VALUES ('TOMMY', 'USA', 'REGULAR')
+    INSERT INTO SURF_SPOTS_FAV VALUES ('TOMMY', 'BIRD CREW', 3)
+-- SEE IT IN THE VIEW ----
+SELECT * FROM VSURFERS_AND_SPOTS    
+-- TRACKED BY STREAM ----
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+    SURFER_NAME	SURF_SPOT	SURF_SPOT_RATING	HOME_COUNTRY	STANCE	METADATA$ACTION	METADATA$ISUPDATE
+    TOMMY	BIRD CREW	3	USA	REGULAR	INSERT	FALSE
+-- TASK RUNS DAILY  -- RUN PROCEDURE TO MOVE THIS OVER ---- 
+EXECUTE TASK WATCH_FOR_SPOTS_CHANGE_TASK;
+-- REMOVED FROM STREAM 
+SELECT * exclude metadata$row_id FROM STREAM_VSURFERS_AND_SPOTS
+-- WE CAN SEE THE NEW DATA FROM TRACKING 
+SELECT * FROM K_TRACK_CHANGES_FROM_TASK
+-- INSERT	TOMMY - BIRD CREW	2023-10-03 09:28:33.309
+
+
+
+--- SNOWFLAKE QUERIES FOR TASKS --------------------------------------------------------------------------------
+-- Get a list of tasks
+SHOW TASKS;
+
+-- Task execution history in the past day
+SELECT *
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(
+    SCHEDULED_TIME_RANGE_START=>DATEADD('DAY',-1,CURRENT_TIMESTAMP()),
+    RESULT_LIMIT => 100))
+ORDER BY SCHEDULED_TIME DESC
+;
+
+-- Scheduled task runs
+SELECT
+    TIMESTAMPDIFF(SECOND, CURRENT_TIMESTAMP, SCHEDULED_TIME) NEXT_RUN,
+    SCHEDULED_TIME,
+    NAME,
+    STATE
+FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY())
+WHERE STATE = 'SCHEDULED'
+ORDER BY COMPLETED_TIME DESC;
+
+
+---- FROM SNOWFLAKE DOCUMENTATION ------------------ 
+Join Results Behavior
+When examining the results of a stream that tracks changes to a view containing a join, it’s important to understand what data is being joined. Changes that have occurred on the left table since the stream offset are being joined with the right table, changes on the right table since the stream offset are being joined with the left table, and changes on both tables since the stream offset are being joined with each other.
+
+Consider the following example:
+
+Two tables are created:
+
+create or replace table orders (id int, order_name varchar);
+create or replace table customers (id int, customer_name varchar);
+A view is created to join the two tables on id. Each table has a single row that joins with the other:
+
+create or replace view ordersByCustomer as select * from orders natural join customers;
+insert into orders values (1, 'order1');
+insert into customers values (1, 'customer1');
+A stream is created that tracks changes to the view:
+
+create or replace stream ordersByCustomerStream on view ordersBycustomer;
+The view has one entry and the stream has none since there have been no changes to the tables since the stream’s current offset:
+
+select * from ordersByCustomer;
++----+------------+---------------+
+| ID | ORDER_NAME | CUSTOMER_NAME |
+|----+------------+---------------|
+|  1 | order1     | customer1     |
++----+------------+---------------+
+
+select * exclude metadata$row_id from ordersByCustomerStream;
++----+------------+---------------+-----------------+-------------------+
+| ID | ORDER_NAME | CUSTOMER_NAME | METADATA$ACTION | METADATA$ISUPDATE |
+|----+------------+---------------+-----------------+-------------------|
++----+------------+---------------+-----------------+-------------------+
+Once updates are made to the underlying tables, selecting ordersByCustomerStream will produce records of orders x Δ customers + Δ orders x customers + Δ orders x Δ customers where:
+
+Δ orders and Δ customers are the changes that have occurred to each table since the stream offset.
+
+orders and customers are the total contents of the tables at the current stream offset.
+
+Note that due to optimizations in Snowflake the cost of computing this expression is not always linearly proportional to the size of the inputs.
+
+If another joining row is inserted in orders then ordersByCustomer will have a new row:
+
+insert into orders values (1, 'order2');
+select * from ordersByCustomer;
++----+------------+---------------+
+| ID | ORDER_NAME | CUSTOMER_NAME |
+|----+------------+---------------|
+|  1 | order1     | customer1     |
+|  1 | order2     | customer1     |
++----+------------+---------------+
+Selecting from ordersByCustomersStream produces one row because Δ orders x customers contains the new insert and orders x Δ customers + Δ orders x Δ customers is empty:
+
+select * exclude metadata$row_id from ordersByCustomerStream;
++----+------------+---------------+-----------------+-------------------+
+| ID | ORDER_NAME | CUSTOMER_NAME | METADATA$ACTION | METADATA$ISUPDATE |
+|----+------------+---------------+-----------------+-------------------|
+|  1 | order2     | customer1     | INSERT          | False             |
++----+------------+---------------+-----------------+-------------------+
+If another joining row is then inserted into customers then ordersByCustomer will have a total of three new rows:
+
+insert into customers values (1, 'customer2');
+select * from ordersByCustomer;
++----+------------+---------------+
+| ID | ORDER_NAME | CUSTOMER_NAME |
+|----+------------+---------------|
+|  1 | order1     | customer1     |
+|  1 | order2     | customer1     |
+|  1 | order1     | customer2     |
+|  1 | order2     | customer2     |
++----+------------+---------------+
+Selecting from ordersByCustomersStream produces three rows because Δ orders x customers, orders x Δ customers, and Δ orders x Δ customers will each produce one row:
+
+select * exclude metadata$row_id from ordersByCustomerStream;
++----+------------+---------------+-----------------+-------------------+
+| ID | ORDER_NAME | CUSTOMER_NAME | METADATA$ACTION | METADATA$ISUPDATE |
+|----+------------+---------------+-----------------+-------------------|
+|  1 | order1     | customer2     | INSERT          | False             |
+|  1 | order2     | customer1     | INSERT          | False             |
+|  1 | order2     | customer2     | INSERT          | False             |
++----+------------+---------------+-----------------+-------------------+
+Note that for append-only streams, Δ orders and Δ customers will contain row inserts only, while orders and customers will contain the complete contents of the tables including any updates that happened before the stream offset.
