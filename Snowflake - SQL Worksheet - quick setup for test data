@@ -1,0 +1,69 @@
+-- ----------------------------------------------------------------------------
+-- Step #1: Accept Anaconda Terms & Conditions
+-- ----------------------------------------------------------------------------
+
+-- See Getting Started section in Third-Party Packages (https://docs.snowflake.com/en/developer-guide/udf/python/udf-python-packages.html#getting-started)
+
+
+-- ----------------------------------------------------------------------------
+-- Step #2: Create the account level objects
+-- ----------------------------------------------------------------------------
+USE ROLE ACCOUNTADMIN;
+
+-- Roles
+SET MY_USER = CURRENT_USER();
+
+CREATE OR REPLACE ROLE KA_ROLE;
+GRANT ROLE KA_ROLE TO ROLE SYSADMIN;
+GRANT ROLE KA_ROLE TO USER IDENTIFIER($MY_USER);
+
+GRANT EXECUTE TASK ON ACCOUNT TO ROLE KA_ROLE;
+GRANT MONITOR EXECUTION ON ACCOUNT TO ROLE KA_ROLE;
+GRANT IMPORTED PRIVILEGES ON DATABASE SNOWFLAKE TO ROLE KA_ROLE;
+
+-- Databases
+CREATE OR REPLACE DATABASE KA_DB;
+GRANT OWNERSHIP ON DATABASE KA_DB TO ROLE KA_ROLE;
+
+-- Warehouses
+CREATE OR REPLACE WAREHOUSE KA_WH WAREHOUSE_SIZE = XSMALL, AUTO_SUSPEND = 300, AUTO_RESUME= TRUE;
+GRANT OWNERSHIP ON WAREHOUSE KA_WH TO ROLE KA_ROLE;
+
+
+
+-- ----------------------------------------------------------------------------
+-- Step #3: Create the database level objects
+-- ----------------------------------------------------------------------------
+    USE ROLE KA_ROLE;
+    USE WAREHOUSE KA_WH;
+    USE DATABASE KA_DB;
+
+-- Schemas
+CREATE SCHEMA RAW_KDATA;
+CREATE SCHEMA K_ANALYTICS;
+
+
+--- FROM SNOWFLAKE EXAMPLE -------------------------
+CREATE OR REPLACE SCHEMA EXTERNAL;
+CREATE OR REPLACE SCHEMA RAW_POS;
+CREATE OR REPLACE SCHEMA RAW_CUSTOMER;
+CREATE OR REPLACE SCHEMA HARMONIZED;
+CREATE OR REPLACE SCHEMA ANALYTICS;
+
+-- External Frostbyte objects
+USE SCHEMA EXTERNAL;
+CREATE OR REPLACE FILE FORMAT PARQUET_FORMAT
+    TYPE = PARQUET
+    COMPRESSION = SNAPPY
+;
+CREATE OR REPLACE STAGE FROSTBYTE_RAW_STAGE
+    URL = 's3://sfquickstarts/data-engineering-with-snowpark-python/'
+;
+
+
+CREATE TABLE SURFERS (SURFER_NAME CHAR(30),
+                        HOME_COUNTRY CHAR(30),
+                        STANCE CHAR(30))
+
+INSERT INTO SURFERS VALUES ('KELLY SLATER', 'USA', 'REGULAR')
+INSERT INTO SURFERS VALUES ('KELLY A', 'USA', 'GOOFY')
