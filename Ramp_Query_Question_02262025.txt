@@ -1,0 +1,33 @@
+-- This a script for showing the work behind a question on an application that I am applying for.
+
+
+-- I loaded data in Snowflake using the scripts provided.
+-- Once the data was loaded, I created a view to sum the data by day.  Then used the OVER function to create the three day moving average.  To have the query return one specific day, I added a common table expression to filter for the one day needed.  See below for details.
+
+-- Create view on source data
+create view vtran as 
+SELECT TO_DATE(transaction_time) tran_date, SUM(transaction_amount) tran_amount FROM TRANSACTIONS GROUP BY TO_DATE(transaction_time)
+ORDER BY 1 
+
+-- Select query to calc moving average
+SELECT 
+    tran_date,
+    tran_amount,
+    AVG(tran_amount) OVER (
+        ORDER BY tran_date 
+        ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+    ) AS three_day_avg
+FROM vtran;
+
+-- CTE to return the one day, the view has the full set of days to make the calculations work
+WITH CTE_TRAN_DATE AS 
+    (SELECT 
+        tran_date,
+        tran_amount,
+        AVG(tran_amount) OVER (
+            ORDER BY tran_date 
+            ROWS BETWEEN 2 PRECEDING AND CURRENT ROW
+        ) AS three_day_avg
+    FROM vtran)
+SELECT * FROM CTE_TRAN_DATE WHERE TRAN_DATE = '2021-01-31'
+
