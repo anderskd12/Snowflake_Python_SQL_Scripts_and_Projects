@@ -1,0 +1,213 @@
+Steps to load data from S3 Bucket:
+
+1. In AWS - Create Role - in this case 'sf_marketing_ka2_s3' - 
+
+**NEED TO ADD EXTERNAL ID OF NEW INTEGRATION!!! *** You get this after creating the integration 
+ - Permissions - AmazonS3ReadOnlyAccess   Can use AWS Roles for this one
+ - Trusted RELATIONSHIPS - I think the 730812497434 is the Snowflake AWS Account  - yt501000-s also Snowflake account
+        -- Get this by:  I think after you create an integration - you and run DESC INTEGRATION and see what Snowflake stamps
+ Value of Trusted RELATIONSHIPS: NEED TO ADD AFTER CREATING INTEGRATION 
+    -- Need to add/adjust arn:aws:iam::######:user/something"
+                          
+ 
+ {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::730812497434:user/yt501000-s"
+            },
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {
+                    "sts:ExternalId": "SRB08229_SFCRole=1_UlQh0NkXwGAnt5EB4wRWfk8QG4Y="
+                }
+            }
+        }
+    ]
+}
+
+
+2.  Create S3 Bucket  - In this case 'snowflake-marketing-ka-2025'
+Set Bucket Policy - I think the iam - 567561414578 needs to be set from my AWS Account number  
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowSnowflakeRoleAccess",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::567561414578:role/sf_marketing_ka2_s3"
+            },
+            "Action": "s3:GetObject",
+            "Resource": "arn:aws:s3:::snowflake-marketing-ka-2025/*"
+        }
+    ]
+}
+
+
+3.  Create INTEGRATION in Snowflake:
+CREATE OR REPLACE STORAGE INTEGRATION my_s3_integration_v1b2b
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = S3
+  ENABLED = TRUE
+  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::567561414578:role/sf_marketing_ka2_s3'
+  STORAGE_ALLOWED_LOCATIONS = ('s3://snowflake-marketing-ka-2025/B2B_Ticket_Sales_2025.csv ');  
+
+-- Integration MY_S3_INTEGRATION_V1B2B successfully created.
+
+4.  IN IAM for this role - I had to add the Storage External ID:
+STORAGE_AWS_EXTERNAL_ID	String	SRB08229_SFCRole=1_UlQh0NkXwGAnt5EB4wRWfk8QG4Y=	
+
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": "arn:aws:iam::730812497434:user/yt501000-s"
+            },
+            "Action": "sts:AssumeRole",
+            "Condition": {
+                "StringEquals": {
+                    "sts:ExternalId": [
+                        "SRB08229_SFCRole=1_UlQh0NkXwGAnt5EB4wRWfk8QG4Y=",
+                        "SRB08229_SFCRole=1_/WCRgfLI3lLTkEL4YR0l8MgLfzM="
+                    ]
+                }
+            }
+        }
+    ]
+}
+
+
+5.  Create Stage - You can do this through the UI from 'Add data from S3' - the syntax below gets created:
+-- This is the SQL from the UI to create the Stage:
+    CREATE STAGE S3_TryB2B 
+    	URL = 's3://snowflake-marketing-ka-2025/B2B_Ticket_Sales_2025.csv' 
+    	STORAGE_INTEGRATION = MY_S3_INTEGRATION_V1B2B 
+    	DIRECTORY = ( ENABLE = true );
+
+--#result# Stage area S3_TRYB2B successfully created.
+
+6. -- Create a table to hold the raw data:
+    Create or replace table B2B_Load_Raw
+    (Seller_ID varchar,	
+    Seller_Type varchar,	
+    Transaction_ID varchar,	
+    Event_Name varchar,	
+    Number_of_Purchased_Tickets INTEGER,	
+    Total_Amount DOUBLE,	
+    Sales_Channel varchar,	
+    Customer_First_Name varchar,	
+    Customer_Last_Name varchar,	
+    Office_Location varchar,	
+    Created_Date DATE)
+
+
+7.  -- COPIED FROM S3!!!
+COPY INTO B2B_Load_Raw
+FROM @S3_TRYB2B
+FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1)
+;
+
+--  CHECK OUT THE DATA -- 
+SELECT COUNT(*) FROM B2B_LOAD_RAW
+    COUNT(*)
+    20000
+SELECT EVENT_NAME, COUNT(*) FROM B2B_LOAD_RAW WHERE 1 = 1 
+GROUP BY EVENT_NAME
+    EVENT_NAME	COUNT(*)
+    Ducks Game	1926
+    Lions Game	2062
+    Brewers Game	1964
+    Bob Seger Concert	2064
+    Rams Game	2010
+    Taylor Swift	2026
+    World Series	2008
+    Super Bowl	1960
+    Packer Game	1878
+    Fair	2102
+
+
+
+-- ALL WORKING!!!!!!!!!!!!!!!!!
+
+
+
+BIN ------------------------------------------------------------------------------------------------------
+BIN ------------------------------------------------------------------------------------------------------
+BIN ------------------------------------------------------------------------------------------------------
+BIN ------------------------------------------------------------------------------------------------------
+
+
+
+
+User: arn:aws:iam::730812497434:user/yt501000-s is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::567561414578:role/sf_marketing_ka2_s3
+    
+DESC INTEGRATION  my_s3_integration_v1b2b
+property	property_type	property_value	property_default
+ENABLED	Boolean	true	false
+STORAGE_PROVIDER	String	S3	
+STORAGE_ALLOWED_LOCATIONS	List	s3://snowflake-marketing-ka-2025/B2B_Ticket_Sales_2025.csv	[]
+STORAGE_BLOCKED_LOCATIONS	List		[]
+STORAGE_AWS_IAM_USER_ARN	String	arn:aws:iam::730812497434:user/yt501000-s	
+STORAGE_AWS_ROLE_ARN	String	arn:aws:iam::567561414578:role/sf_marketing_ka2_s3	
+STORAGE_AWS_EXTERNAL_ID	String	SRB08229_SFCRole=1_ayNrQ30W6I3OcesqImJzKELOTg0=	
+USE_PRIVATELINK_ENDPOINT	Boolean	false	false
+COMMENT	String		
+SRB08229_SFCRole=1_/WCRgfLI3lLTkEL4YR0l8MgLfzM=
+
+
+DESC INTEGRATION  my_s3_integration_v3
+property	property_type	property_value	property_default
+ENABLED	Boolean	true	false
+STORAGE_PROVIDER	String	S3	
+STORAGE_ALLOWED_LOCATIONS	List	s3://snowflake-marketing-ka-2025/Adds_Clicks_101-104.csv	[]
+STORAGE_BLOCKED_LOCATIONS	List		[]
+STORAGE_AWS_IAM_USER_ARN	String	arn:aws:iam::730812497434:user/yt501000-s	
+STORAGE_AWS_ROLE_ARN	String	arn:aws:iam::567561414578:role/sf_marketing_ka2_s3	
+STORAGE_AWS_EXTERNAL_ID	String	SRB08229_SFCRole=1_UlQh0NkXwGAnt5EB4wRWfk8QG4Y=	
+USE_PRIVATELINK_ENDPOINT	Boolean	false	false
+COMMENT	String		
+
+
+4.  Create from Add Data - S3 - when you choose authentication, you will select this new INTEGRATION
+CREATE STAGE s3_B2B_Setup 
+	URL = 's3://snowflake-marketing-ka-2025/B2B_Ticket_Sales_2025.csv' 
+	STORAGE_INTEGRATION = MY_S3_INTEGRATION_V1B2B 
+	DIRECTORY = ( ENABLE = true );
+User: arn:aws:iam::730812497434:user/yt501000-s is not authorized to perform: sts:AssumeRole on resource: arn:aws:iam::567561414578:role/sf_marketing_ka2_s3
+
+
+desc 
+
+CREATE OR REPLACE STORAGE INTEGRATION my_s3_integration_retry
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = S3
+  ENABLED = TRUE
+  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::567561414578:role/sf_marketing_ka2_s3'
+  STORAGE_ALLOWED_LOCATIONS = ('s3://snowflake-marketing-ka-2025/Adds_Clicks_101-104.csv ');  
+
+
+    CREATE STAGE s3_B2B_Setup_try_clicks 
+	URL = 's3://snowflake-marketing-ka-2025/Adds_Clicks_101-104.csv' 
+	STORAGE_INTEGRATION = my_s3_integration_retry 
+	DIRECTORY = ( ENABLE = true );
+
+    
+s3://snowflake-marketing-ka-2025/Adds_Clicks_101-104.csv
+
+  CREATE STAGE S3_P2P_Sales_2025 
+	URL = 's3://snowflake-marketing-ka-2025/B2B_Ticket_Sales_2025.csv' 
+	STORAGE_INTEGRATION = MY_S3_INTEGRATION_V1B2B 
+	DIRECTORY = ( ENABLE = true );
+
+
+
+    -- COPIED FROM S3!!!
+COPY INTO B2B_Ticket_Sales
+FROM @my_s3_integration_v1b2b
+FILE_FORMAT = (TYPE = 'CSV' FIELD_OPTIONALLY_ENCLOSED_BY = '"' SKIP_HEADER = 1)
+;
